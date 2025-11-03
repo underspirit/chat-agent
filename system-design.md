@@ -303,91 +303,6 @@ summaries(
 * LLM 请求失败：**短重试**（指数退避），超过阈值降级到替补模型；
 * 网络中断：允许客户端重连并用同 `x-request-id` 重放（可选特性）。
 
-### 7.3 熔断与降级
-
-* 基于供应商错误率/延迟的 **断路器**；
-* 降级策略：切换到更小/本地模型；降低 `max_tokens`；关闭工具调用等高成本特性。
-
----
-
-## 8. 安全与合规
-
-* **鉴权**：gRPC metadata 携带服务令牌/用户签名；服务端校验租户与调用权限；
-* **配额与限流**：按 `player_id`、`niki_id`、来源 IP 维度限流；
-* **隐私**：PII 脱敏日志；按租户隔离会话数据；
-* **内容安全**：预/后置审核（黑白名单、阈值分类器），对违规输出截断并返回安全提示；
-* **审计**：关键操作审计日志（读取历史、清理、模型切换）。
-
----
-
-## 9. 可观测性
-
-* **日志**：结构化（requestId、playerId、nikiId、model、latency、tokens）；
-* **指标**：
-
-  * QPS / 并发 / 错误率；
-  * Prompt/Completion tokens、TOKENS/s；
-  * 平均上下文长度、摘要命中率；
-* **Tracing**：gRPC 入口 span → HistoryStore → PromptBuild → LLMProvider；
-* **采样**：对长会话按比例采样保存完整 prompt 以便复现。
-
----
-
-## 10. 配置与部署
-
-### 10.1 配置（示例 YAML）
-
-```yaml
-server:
-  port: 8080
-  tls: false
-
-historyStore:
-  type: redis # memory|file|sql|redis
-  redis:
-    addr: 127.0.0.1:6379
-    db: 0
-
-llm:
-  provider: openai # openai|vllm|local
-  openai:
-    baseUrl: https://api.openai.com/v1
-    model: gpt-4o-mini
-    timeoutMs: 60000
-    maxTokens: 1024
-    temperature: 0.7
-
-context:
-  hardTokenLimit: 8192
-  reserveForCompletion: 1024
-  maxTurns: 12
-  summarization:
-    enabled: true
-    triggerTurns: 20
-    summaryModel: gpt-4o-mini
-
-observability:
-  logLevel: info
-  metrics: prometheus
-  tracing: otlp
-
-security:
-  authRequired: true
-  rateLimit:
-    perPlayerQps: 2
-    burst: 5
-```
-
-### 10.2 部署拓扑
-
-* **无状态多副本**：Kubernetes `Deployment`，前置 gRPC Ingress；
-* **配置中心**：ConfigMap/Secret 注入；
-* **水平扩展**：HPA 基于 QPS/CPU/自定义 TOKENS/s；
-* **蓝绿/金丝雀**：按 `niki_id` 或百分比路由不同模型版本；
-* **就绪/存活探针**：检查 Store/LLM 依赖可用性。
-
----
-
 ## 11. 参考实现要点（伪代码）
 
 ### 11.1 gRPC 处理器
@@ -476,7 +391,6 @@ class OpenAIProvider implements LlmProvider {
 * **集成测试**：起一个内存 Store + Mock LLM 的 gRPC 端到端流；
 * **回归测试**：固定输入/输出快照；
 * **压测**：并发 100~1k，测 tokens/s、P95、错误率；
-* **故障演练**：断网、LLM 500、Redis 慢查询、限流命中。
 
 ---
 
@@ -485,30 +399,6 @@ class OpenAIProvider implements LlmProvider {
 * v1：内存/Redis Store，OpenAI Provider；
 * v1.1：摘要与上下文自适应；
 * v1.2：多供应商路由（按 niki_id 或 AB）；
-* v1.3：工具/函数调用与 RAG（可在 LLM SPI 上层增加 Orchestrator）；
-* v2.0：多模态（图片/音频）、多轮工具执行、会话迁移/跨端同步。
-
----
-
-## 14. 风险与权衡
-
-* **上下文成本**：历史越长费率越高 → 摘要/裁剪；
-* **一致性**：多副本竞争写入 → 单会话分区/哈希一致性；
-* **供应商波动**：加熔断与降级；
-* **数据合规**：日志脱敏、数据过期策略；
-* **开发效率 vs 灵活性**：通过 SPI 保持灵活，同时提供默认实现与模板工程。
-
----
-
-## 15. 附：典型错误处理清单
-
-| 场景        | 处理                  | 返回策略                     |
-| --------- | ------------------- | ------------------------ |
-| 入参缺失      | 400/InvalidArgument | 立即结束流并返回错误状态             |
-| Store 不可用 | 快速失败 + 熔断           | 返回提示“系统繁忙，请稍后重试”         |
-| LLM 超时    | 短重试 + 降级模型          | 若仍失败，返回部分内容或提示           |
-| 超上下文      | 自动摘要/裁剪             | 记录裁剪比率指标                 |
-| 客户端断开     | 停止下游推理              | 取消 token 消耗，回滚写入（或标注未完成） |
 
 ---
 
