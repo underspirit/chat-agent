@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package chat;
+
+// 服务定义
+service ChatAgentService {
+  // 单向流：客户端发送请求 → 服务端返回流式文本回复
+  rpc Chat (PlayerChatRequest) returns (stream PlayerChatResponse);
+}
+
+// 请求消息：包含玩家和 Niki 的信息及输入文本
+message PlayerChatRequest {
+  string player_id = 1;      // 玩家ID（必填）
+  string player_nickname = 2; // 玩家昵称（必填）
+  string niki_id = 3;        // Niki的ID（必填）
+  string niki_name = 4;      // Niki名称（必填）
+  string input_text = 5;     // 玩家输入文本（必填）
+}
+
+// 流式响应消息：服务端逐步返回生成的文本块
+message PlayerChatResponse {
+  string generated_text = 1; // 生成的文本片段
+}
